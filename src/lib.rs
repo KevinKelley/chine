@@ -272,24 +272,26 @@ impl Machine
             self.state.S.clone()
         );
 
-        match *X {
+        let x = match *X {
 //  case HALT    : return // and return A
-HALT {..} => {},
+HALT {..} => {
+    box HALT {unused:true}
+},
 //  case REFER   : I: REFER   ; A = E[I.var]; X = I.next
 REFER {var:ref var, k:ref k} => {
     A = E.get(var).expect("yowza");
-    //X = *k;
+    k.clone()
 },
 //  case CONSTANT: I: CONSTANT; A = I.obj; X = I.next
 CONSTANT {obj:ref obj, k:ref k} => {
     A = obj.clone();
-    //X = *k;
+    k.clone()
 },
 //  case CLOSE   : I: CLOSE   ; A = AxonClosure(I.vars, E, I.body); X = I.next
 CLOSE {vars:ref vars, body:ref body, k:ref k} => {
     let a = Closure { params:vars.clone(), env:E.clone(), body:body.clone() };
     A = OClosure(a);
-    //X = *k;
+    k.clone()
 },
 //  case TEST    : I: TEST    ; X = (A == true) ? I.thenc : I.elsec
 TEST {kthen:ref kthen, kelse:ref kelse} => {
@@ -299,24 +301,23 @@ TEST {kthen:ref kthen, kelse:ref kelse} => {
             //OBool(false) => { kelse },
             _ => { kelse }
         };
-    //X = k;
+    k.clone()
 },
 //  case ASSIGN  : I: ASSIGN  ; E[I.var] = A; X = I.next
 ASSIGN {var:ref var, k:ref k} => {
     E.set(var, A.clone());
-    //X = k;
+    k.clone()
 },
 //  case CONTI   : I: CONTI   ; A = capture_cc(S); X = I.next
 CONTI {k:ref k} => {
     let a = Machine::capture_cc(&S);
     A = OClosure(a);
-    //X = k;
+    k.clone()
 },
 //  case NUATE   : I: NUATE   ; A = E[I.var]; X = RETURN;
 NUATE {s:ref s, var:ref var} => {
     A = E.get(var).expect("yup");
-    let k = box RETURN {unused:true};
-    //X = k;
+    box RETURN {unused:true}
 },
 //  case FRAME   : I: FRAME   ; S = Frame(E, R, I.ret, S); R = [,]; X = I.next
 FRAME {k:ref k, ret:ref ret} => {
@@ -328,13 +329,12 @@ FRAME {k:ref k, ret:ref ret} => {
     };
     S = s;
     R = vec!();
-    // X = k;
+    k.clone()
 },
 //  case ARGUMENT: I: ARGUMENT; R.add(A); X = I.next
 ARGUMENT {k:ref k} => {
     R.push(A.clone());
-    // X = k;
-
+    k.clone()
 },
 //  case APPLY   : I: APPLY   ; closure := (AxonClosure) A
 //                              vals := R
@@ -345,13 +345,13 @@ ARGUMENT {k:ref k} => {
 APPLY {..} => {
     let closure = match A {
         OClosure(ref clo) => { clo.clone() },
-        _ => fail!("no clo")
+        _ => fail!("yo! no clo")
     };
-    let vals = R.clone();
+    let vals = R;
+    R = vec!();
     let vars = closure.params.clone();
     E = closure.env.extend(vars, vals);
-    R = vec!();
-    X = closure.body;
+    closure.body
 },
 //  case INVOKE  : I: INVOKE  ; obj := A
 //                              // meth := obj.typeof.slot[I.method]
@@ -360,13 +360,24 @@ APPLY {..} => {
 //                              R = [,]
 //                              X = I.next
 INVOKE {method:ref method, k:ref code} => {
-    //TODO
+    let f = match A {
+        OClosure(ref clo) => { clo.clone() },
+        _ => fail!("no clo no mo")
+    };
+    let args = R;
+    R = vec!();
+    //TODO: A = (f)(args);
+    code.clone()
 },
 //  case RETURN  : I: RETURN  ; X = S.ret; E = S.bindings; R = S.valueRib; S = S.caller
 RETURN {..} => {
-    //TODO
+    let x = S.ret;
+    E = S.bindings;
+    R = S.valueRib;
+    S = *S.caller.expect("DCM,ICU");
+    x
 },
-        }
+        };
 
         let retval = A.clone();
         self.state = VMState {
@@ -395,24 +406,21 @@ RETURN {..} => {
     }
 
 
-  /// a continuation is a closure that in addition has access to the frame
-  /// in which it was created (where call/cc was called).
-  /// the body of a continuation closure, when executed, restores the
-  /// saved frame (which includes its calling frames)  (pg. 50)
-  ///
-  /// a continuation generates a closure that captures
-  /// the current control stack; the body of the generated
-  /// closure is an instruction that will restore the
-  /// captured stack.
-  fn capture_cc(s: &Frame) -> Closure {
-    let v = "__V__";  // param name used by the 'nuate instruction
-                      // to access the first (only) argument
-                      // to the continuation.
-                      // this comes from some source like  call/cc exp
-    let body = box NUATE{ s:s.clone(), var:v.to_string() };
-    let env  = Scope::make(None);
-    let vars = vec!(v.to_string());
-    Closure { params:vars, env:env, body:body }
-  }
+    /// a continuation is a closure that in addition has access to the frame
+    /// in which it was created (where call/cc was called).
+    /// the body of a continuation closure, when executed, restores the
+    /// saved frame (which includes its calling frames)  (pg. 50)
+    ///
+    /// a continuation generates a closure that captures
+    /// the current control stack; the body of the generated
+    /// closure is an instruction that will restore the
+    /// captured stack.
+    fn capture_cc(s: &Frame) -> Closure {
+        let v = "__V__";
+        let body = box NUATE{ s:s.clone(), var:v.to_string() };
+        let env  = Scope::make(None);
+        let vars = vec!(v.to_string());
+        Closure { params:vars, env:env, body:body }
+    }
 
 }
