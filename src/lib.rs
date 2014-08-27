@@ -1,3 +1,11 @@
+// (A,X,E,R,S)
+//
+// Lizzie Borden took an axe
+// And gave her mother forty whacks.
+// When she saw what she had done,
+// She gave her father forty-one.
+//
+
 #![feature(struct_variant)]
 #![allow(dead_code)]
 #![allow(uppercase_variables)]
@@ -6,23 +14,110 @@
 use std::collections::hashmap::HashMap;
 
 
-// some kinda source-language
+// scheme kinda source-language
 
-#[deriving(Eq,PartialEq,Ord,PartialOrd)]
-enum Expr {
-    EVar{x:String},            // variable
-    ELit{v:Lit},            // literal
-    EApp{f:Exp, e:Exp},        // application, f(e)
-    EAbs{f:String, e:Exp},    // abstraction
-    ELet{x:String, e:Exp, e2:Exp}
-}
-type Exp = Box<Expr>;
+pub enum CoreLanguage {
+    // <core> → <object>
+    // <core> → <variable>
+    // <core> → (quote <object>)
+    // <core> → (lambda (<variable> ... ) <core>)
+    // <core> → (if <core> <core> <core>)
+    // <core> → (set! <variable> <core>)
+    // <core> → (call/cc <core>)
+    // <core> → (<core> <core> ... )
 
-#[deriving(Eq,PartialEq,Ord,PartialOrd)]
-enum Lit {
-    LInt(i32),
-    LBool(bool)
+    Object,
+    Variable(String),
+    Quote(Core),
+    Lambda(Vec<String>, Core),
+    If(Core, Core, Core),
+    Set(String, Core),
+    CallCC(Core),
+    List(Vec<Core>)
 }
+type Core = Box<CoreLanguage>;
+
+
+//(define compile
+//  (lambda (x next)
+//    (cond
+//      [(symbol? x)
+//       (list ’refer x next)]
+//      [(pair? x)
+//       (record-case x
+//          [quote (obj)
+//           (list ’constant obj next)]
+//          [lambda (vars body)
+//           (list ’close vars (compile body ’(return)) next)]
+//          [if (test then else)
+//           (let ([thenc (compile then next)]
+//                 [elsec (compile else next)])
+//              (compile test (list ’test thenc elsec)))]
+//          [set! (var x)
+//           (compile x (list ’assign var next))]
+//          [call/cc (x)
+//           (let ([c (list ’conti
+//                          (list ’argument
+//                                (compile x ’(apply))))])
+//              (if (tail? next)
+//                  c
+//                  (list ’frame next c)))]
+//          [else
+//           (recur loop ([args (cdr x)]
+//                        [c (compile (car x) ’(apply))])
+//              (if (null? args)
+//                  (if (tail? next)
+//                      c
+//                      (list ’frame next c))
+//                  (loop (cdr args)
+//                        (compile (car args)
+//                                 (list ’argument c)))))])]
+//      [else
+//       (list ’constant x next)])))
+pub fn compile(x: CoreLanguage, next: Code) -> Code {
+    match x {
+        Variable(str) => {
+            box REFER{var:str, k:next}
+        },
+        Quote(obj) => {
+            box CONSTANT{obj:obj, k:next}
+        },
+        Lambda(vars, body) => {
+            box CLOSE{ vars:vars, body:compile(*body, box RETURN{unused:true}), k:next }
+        },
+        If(test, seq, alt) => {
+            let thenc = compile(*seq, next);
+            let elsec = compile(*alt, next);
+            compile(*test, box TEST{kthen:thenc, kelse:elsec})
+        },
+        Set(var, x) => {
+            compile(*x, box ASSIGN{var:var, k:next} )
+        },
+        CallCC(x) => {
+            let c = box CONTI{
+                k: box ARGUMENT{ k:compile(*x, box APPLY{unused:true}) }
+            };
+            if is_tail(next) { c } else { box FRAME{k:next, ret:c} }
+        },
+        List(x) => {
+            let args = x.slice_from(1);
+            let c = compile(*x[0], box APPLY{unused:true});
+            for arg in args.iter() {
+                c = compile(**arg, box ARGUMENT{k:c});
+            }
+            if is_tail(next) { c } else { box FRAME{k:next, ret:c} }
+        }
+        _ =>
+            { box CONSTANT{obj:x, k:next} }
+    }
+}
+fn is_tail(x: Code) -> bool {
+    match *x {
+        RETURN{..} => true,
+        _ => false
+    }
+}
+
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -55,6 +150,7 @@ type Code = Box<Opcode>;
 
 #[deriving(Clone)]
 enum Obj {
+    ONil,
     OBool(bool),
     OInt(i32),
     OFloat(f32),
@@ -88,65 +184,6 @@ impl Scope
         //...
         extended
     }
-
-//    @Operator Obj? get(Str var) {
-//        if (local.containsKey(var)) return local[var]
-//        if (parent != null) return parent.get(var)
-//        return null    // TODO throw, to require def-before-use?
-//    }
-//
-//    /// this is "set!", the scheme function that alters a binding's value.
-//    /// it is required that the binding exist, whether in current scope or
-//    /// in an enclosing scope doesn't matter.
-//    @Operator This set(Str var, Obj? val) {
-//        if (local.containsKey(var)) {
-//            local[var] = val;
-//            return this
-//        }
-//        if (parent != null) {
-//            return parent.set(var, val)
-//        }
-//        throw Err("$var not defined")
-//        //return this
-//    }
-//
-//    /// define a variable binding in current scope.
-//    This def(Str var, Obj? val) {
-//        if (local.containsKey(var)) throw Err("'$var' already defined!")
-//        //local[var] = val
-//        return this
-//    }
-//
-//    /// lookup a var starting in local scope, and return the scope that
-//    /// contains that var definition, or null if not found
-//    Scope? lookup(Str var) {
-//        if (local.containsKey(var)) return this
-//        if (parent != null) return parent.lookup(var)
-//        return null
-//    }
-//
-//    /// extend this environment with a new scope, and add vars/vals to it
-//    This extend(Str[]? vars, Obj?[]? vals) {
-//        scope := make(this) // create a new scope w/ this as its parent
-//        vars?.each |var, i| {
-//            val := (vals != null && vals.size > i) ? vals[i] : null
-//            scope.def(var, val)
-//        }
-//        return scope
-//    }
-//
-//    static Scope makeEmptyRoot() { Scope() }
-//
-//    static Scope makeWithFantomImplementedAxonFuncs(Scope? parent := null) {
-//        scope := Scope(parent)
-//        funcs := Introspect.allAxonFanFuncs
-//        funcs.each |func| {
-//            qname := func.qname
-//            primfunc := func //|Obj?[] args->Obj?| { func.call(args) }
-//            scope.def(qname, primfunc)
-//        }
-//        return scope
-//    }
 }
 
 
@@ -264,7 +301,7 @@ impl Machine
     fn init(state: VMState) -> Machine { Machine { state:state } }
 
     fn step(&mut self) -> Option<Obj> {
-        let (mut A,mut X,mut E,mut R,mut S) = (
+        let (mut A,X,mut E,mut R,mut S) = (
             self.state.A.clone(),
             self.state.X.clone(),
             self.state.E.clone(),
@@ -287,7 +324,7 @@ CONSTANT {obj:ref obj, k:ref k} => {
     A = obj.clone();
     k.clone()
 },
-//  case CLOSE   : I: CLOSE   ; A = AxonClosure(I.vars, E, I.body); X = I.next
+//  case CLOSE   : I: CLOSE   ; A = Closure(I.vars, E, I.body); X = I.next
 CLOSE {vars:ref vars, body:ref body, k:ref k} => {
     let a = Closure { params:vars.clone(), env:E.clone(), body:body.clone() };
     A = OClosure(a);
