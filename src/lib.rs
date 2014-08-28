@@ -10,12 +10,17 @@
 #![allow(dead_code)]
 #![allow(uppercase_variables)]
 #![allow(unused_variable)]
+#![allow(unused_imports)]
+//#![allow(visible_private_types)]
 
 use std::collections::hashmap::HashMap;
 
+mod r0;
+mod r1;
 
 // scheme kinda source-language
 
+#[deriving(Clone)]
 pub enum CoreLanguage {
     // <core> → <object>
     // <core> → <variable>
@@ -26,7 +31,7 @@ pub enum CoreLanguage {
     // <core> → (call/cc <core>)
     // <core> → (<core> <core> ... )
 
-    Object,
+    Object(Obj),
     Variable(String),
     Quote(Core),
     Lambda(Vec<String>, Core),
@@ -35,8 +40,17 @@ pub enum CoreLanguage {
     CallCC(Core),
     List(Vec<Core>)
 }
-type Core = Box<CoreLanguage>;
+pub type Core = Box<CoreLanguage>;
 
+#[deriving(Clone)]
+pub enum Obj {
+    ONil,
+    OBool(bool),
+    OInt(i32),
+    OFloat(f32),
+    OStr(String),
+    OClosure(Closure)
+}
 
 //(define compile
 //  (lambda (x next)
@@ -80,14 +94,14 @@ pub fn compile(x: CoreLanguage, next: Code) -> Code {
             box REFER{var:str, k:next}
         },
         Quote(obj) => {
-            box CONSTANT{obj:obj, k:next}
+            box CONSTANT{obj:ONil, k:next}
         },
         Lambda(vars, body) => {
             box CLOSE{ vars:vars, body:compile(*body, box RETURN{unused:true}), k:next }
         },
         If(test, seq, alt) => {
-            let thenc = compile(*seq, next);
-            let elsec = compile(*alt, next);
+            let thenc = compile(*seq, next.clone());
+            let elsec = compile(*alt, next.clone());
             compile(*test, box TEST{kthen:thenc, kelse:elsec})
         },
         Set(var, x) => {
@@ -97,27 +111,26 @@ pub fn compile(x: CoreLanguage, next: Code) -> Code {
             let c = box CONTI{
                 k: box ARGUMENT{ k:compile(*x, box APPLY{unused:true}) }
             };
-            if is_tail(next) { c } else { box FRAME{k:next, ret:c} }
+            if is_tail(&next) { c } else { box FRAME{k:next, ret:c} }
         },
         List(x) => {
             let args = x.slice_from(1);
-            let c = compile(*x[0], box APPLY{unused:true});
+            let mut c = compile((*x[0]).clone(), box APPLY{unused:true});
             for arg in args.iter() {
-                c = compile(**arg, box ARGUMENT{k:c});
+                c = compile((**arg).clone(), box ARGUMENT{k:c});
             }
-            if is_tail(next) { c } else { box FRAME{k:next, ret:c} }
+            if is_tail(&next) { c } else { box FRAME{k:next, ret:c} }
         }
         _ =>
-            { box CONSTANT{obj:x, k:next} }
+            { box CONSTANT{obj:ONil /*x*/, k:next} }
     }
 }
-fn is_tail(x: Code) -> bool {
-    match *x {
+fn is_tail(x: &Code) -> bool {
+    match **x {
         RETURN{..} => true,
         _ => false
     }
 }
-
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -146,17 +159,8 @@ pub enum Opcode {
     INVOKE   {method: String, k: Code},
     RETURN   {unused:bool},
 }
-type Code = Box<Opcode>;
+pub type Code = Box<Opcode>;
 
-#[deriving(Clone)]
-enum Obj {
-    ONil,
-    OBool(bool),
-    OInt(i32),
-    OFloat(f32),
-    OStr(String),
-    OClosure(Closure)
-}
 
 ///  Scope is a dynamic environment: a set of bindings, implemented
 /// as a map from variable names (as Str, representing symbols)
@@ -164,25 +168,37 @@ enum Obj {
 #[deriving(Clone)]
 struct Scope {
     parent: Option<Box<Scope>>,  // link to enclosing scope
-    local: HashMap<String, Obj>// local vars (conceptually includes fn params)
+    //local: HashMap<String, Obj>// local vars (conceptually includes fn params)
+    vars: Vec<String>,
+    vals: Vec<Obj>
 }
 impl Scope
 {
-    fn make(parent:Option<Box<Scope>>) -> Scope {
-        Scope { parent:parent, local:HashMap::new() }
+    fn new(parent:Option<Box<Scope>>) -> Scope {
+        Scope { parent:parent, vars:vec!(), vals:vec!() }
     }
 
     fn get(&self, var: &String) -> Option<Obj> {
-        None
+        let ix_opt = self.vars.iter().position(|v| { v == var });
+        match ix_opt {
+            Some(ix) => Some(self.vals[ix].clone()),
+            None => None
+        }
     }
-    fn set(&self, var: &String, val: Obj) {
+    fn set(&mut self, var: &String, val: Obj) {
+        let ix_opt = self.vars.iter().position(|v| { v == var });
+        match ix_opt {
+            Some(ix) => { *self.vals.get_mut(ix) = val },
+            None => self.vals.push(val)
+        };
 
     }
     fn extend(&self, vars: Vec<String>, vals: Vec<Obj>) -> Scope {
-
-        let extended = Scope::make(Some(box self.clone()));
-        //...
-        extended
+        Scope{
+            parent: Some(box self.clone()),
+            vars: vars,
+            vals: vals
+        }
     }
 }
 
@@ -219,7 +235,7 @@ impl Frame {
 /// and extends its environment with those bindings, and executes its
 /// body with that extended environment.
 #[deriving(Clone)]
-struct Closure {
+pub struct Closure {
     // names of parameters to be applied to closure
     params: Vec<String>,
     // static environment (lexical scope, captures scopes enclosing definition)
@@ -455,7 +471,7 @@ RETURN {..} => {
     fn capture_cc(s: &Frame) -> Closure {
         let v = "__V__";
         let body = box NUATE{ s:s.clone(), var:v.to_string() };
-        let env  = Scope::make(None);
+        let env  = Scope::new(None);
         let vars = vec!(v.to_string());
         Closure { params:vars, env:env, body:body }
     }

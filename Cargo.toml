@@ -3,6 +3,7 @@
 name = "chine"
 version = "0.0.1"
 authors = ["Kevin Kelley <kevin@kelleysoft.com>"]
+build = "make -f parser.mk"
 
 [dependencies.peg]
 git = "https://github.com/kevinmehall/rust-peg"
