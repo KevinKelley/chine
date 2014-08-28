@@ -1,0 +1,23 @@
+#[export]
+def 	-> (Vec<String>, ())
+		= "(" "define" "(" vs:var+ ")" e:exp ")" { (vs, e) }
+
+#[export]
+exp 	= var { () }
+		/ con { () }
+		/ "(" prm exp+ ")"
+		/ "(" var exp+ ")"
+		/ "(" "cond" "(" ( exp exp ")" )+ ")"
+		/ "(" "cond" "(" ( exp exp ")" )+ "(" "else" exp ")" ")"
+
+var		-> String
+		= [a-z]+ { match_str.to_string() }
+
+con 	-> super::Obj
+		= [0-9]+ { super::OInt(from_str::<i32>(match_str).unwrap()) }
+
+prm		-> String
+		= "+" { match_str.to_string() }
+		/ "-" { match_str.to_string() }
+		/ "*" { match_str.to_string() }
+		/ "/" { match_str.to_string() }

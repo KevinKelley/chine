@@ -1,0 +1,61 @@
+//pub enum CoreLanguage {
+//    // <core> → <object>
+//    // <core> → <variable>
+//    // <core> → (quote <object>)
+//    // <core> → (lambda (<variable> ... ) <core>)
+//    // <core> → (if <core> <core> <core>)
+//    // <core> → (set! <variable> <core>)
+//    // <core> → (call/cc <core>)
+//    // <core> → (<core> <core> ... )
+//
+//    Object(Obj),
+//    Variable(String),
+//    Quote(Core),
+//    Lambda(Vec<String>, Core),
+//    If(Core, Core, Core),
+//    Set(String, Core),
+//    CallCC(Core),
+//    List(Vec<Core>)
+//enum Obj {
+//    ONil,
+//    OBool(bool),
+//    OInt(i32),
+//    OFloat(f32),
+//    OStr(String),
+//    OClosure(Closure)
+
+#[export]
+core    -> Box<super::CoreLanguage>
+        = o:object { box o }
+        / v:variable { box super::Variable(v) }
+        / "(" "quote" o:object ")"
+            { box super::Quote(box o) }
+        / "(" "lambda" "(" vs:variable+ ")" e:core ")"
+            { box super::Lambda(vs, e) }
+        / "(" "if" p:core t:core e:core ")"
+            { box super::If(p, t, e) }
+        / "(" "set!" v:variable e:core ")"
+            { box super::Set(v, e) }
+        / "(" "call/cc" e:core ")"
+            { box super::CallCC(e) }
+        / "(" es:core+ ")"
+            { box super::List(es) }
+
+object  -> super::CoreLanguage
+        = v: bool       { super::Object(v) }
+        / v: num        { super::Object(v) }
+        / v: string     { super::Object(v) }
+
+variable -> String
+        = [a-zA-Z]+     { match_str.to_string() }
+
+bool    -> super::Obj
+        = "#t"          { super::OBool(true) }
+        / "#f"          { super::OBool(false) }
+
+num     -> super::Obj
+        = [0-9]+        { super::OInt(from_str::<i32>(match_str).unwrap()) }
+
+
+string -> super::Obj
+        = "\"" [^\"]* "\""  { super::OStr(match_str.to_string()) }
